@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  # ── PostgreSQL with pgvector extension ──────────────────────────────────────
+  db:
+    image: pgvector/pgvector:16-pgdg
+    container_name: vigil-db
+    environment:
+      POSTGRES_DB: vigil
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Vigil FastAPI Backend ───────────────────────────────────────────────────
+  backend:
+    build: .
+    container_name: vigil-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=vigil
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - GROQ_API_KEY=${GROQ_API_KEY:-your_groq_api_key_here}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.1-8b-instant}
+      - AGENT_MAX_ITERATIONS=10
+      - METRICS_INTERVAL_SECONDS=5
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
