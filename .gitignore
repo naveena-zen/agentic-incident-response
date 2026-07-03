@@ -48,21 +48,30 @@ coverage.xml
 .pytest_cache/
 cover/
 
-# Django stuff:
+# Databases
+*.db
+*.sqlite3
 db.sqlite3
 db.sqlite3-journal
 
-# Logs
+# Logs (keep folders, ignore log files)
+logs/*.log
 *.log
 
-# Environments
+# Environments — NEVER commit secrets
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 
+# Streamlit secrets
+.streamlit/secrets.toml
+
 # OS-specific
+.DS_Store
 Thumbs.db
 Desktop.ini
 
