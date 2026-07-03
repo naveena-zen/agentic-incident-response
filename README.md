@@ -2,6 +2,100 @@
 
 Vigil is an autonomous, agentic AI incident response system designed as a working prototype to demonstrate the power of combining tool-augmented LLM reasoning, local retrieval-augmented generation (RAG) over historical incidents, and a deterministic safety policy. When a service threshold is breached, Vigil automatically coordinates a two-phase pipeline: Phase 1 engages a Groq-powered SRE agent running a hand-written execution loop that utilizes read-only diagnostic tools (logs, metrics, deploy history, and vector similarity search over pgvector) to diagnose the root cause, and Phase 2 passes this diagnostic hypothesis to a deterministic safety engine that executes automated mitigation actions (restarts, rollbacks) or alerts an on-call responder for manual approval.
 
+---
+
+## Architecture Flow
+
+The workflow transitions from metrics collection to deterministic threshold checks, LLM-based RAG diagnosis, and deterministic safety-gated execution.
+
+```
++----------------------------------------------------------------------------+
+|                          1. METRICS ENGINE (Background)                    |
+|  - psutil collects host stats. Synthetic loops simulate APIs.              |
+|  - Check thresholds: latency > 500ms | error > 5% | CPU > 85%              |
++-------------------------------------+--------------------------------------+
+                                      |
+                            [Threshold Breach]
+                                      |
++-------------------------------------v--------------------------------------+
+|                       2. RULE ENGINE & INVESTIGATION LOCK                  |
+|  - Checks service cooldown (120s) and investigation_in_progress flag       |
+|  - Sets lock = True, inserts Incident in DB, fires async investigation.    |
++-------------------------------------+--------------------------------------+
+                                      |
+                                  [Fires]
+                                      |
++-------------------------------------v--------------------------------------+
+|                     3. PHASE 1: AGENTIC AI & RAG DIAGNOSIS                 |
+|  - Hand-written loop executing OpenAI-compatible tool calls.               |
+|  - LLM is strictly READ-ONLY. Allowed tools:                               |
+|    - get_metrics(svc)                                                      |
+|    - get_logs(svc)                                                         |
+|    - get_recent_deploys(svc)                                               |
+|    - search_similar_incidents(query)  <-- RAG via local sentence-trans     |
+|                                           & pgvector HNSW index.           |
+|  - Loop terminates with JSON: Hypothesis, Confidence, Recommended Action.  |
++-------------------------------------+--------------------------------------+
+                                      |
+                             [Outputs JSON]
+                                      |
++-------------------------------------v--------------------------------------+
+|                    4. PHASE 2: DETERMINISTIC SAFETY POLICY                 |
+|  - Pure Python logic (No LLM calls). Checks conditions:                    |
+|    - Confidence >= 80%                                                     |
+|    - Service in Allowlist (e.g. checkout-api)                              |
+|    - Service is NOT local-host                                             |
+|                                                                            |
+|          [Passed]                                    [Blocked]             |
+|             |                                            |                 |
+|    +--------v--------+                         +---------v---------+       |
+|    |  AUTO-RESOLVE   |                         |    PAGE HUMAN     |       |
+|    | Restart/Rollback|                         | SMTP Log Fallback |       |
+|    +--------+--------+                         +---------+---------+       |
+|             |                                            |                 |
+|     (Adds to RAG KB)                                     |                 |
+|             |                                    [Human Click Approve]     |
+|             |                                            |                 |
+|             |                                  +---------v---------+       |
+|             |                                  | MANUAL MITIGATE   |       |
+|             |                                  | Executes action   |       |
+|             |                                  +---------+---------+       |
+|             +-----------------------+--------------------+                 |
+|                                     |                                      |
+|                             [Finally Block]                                |
+|                                     |                                      |
+|                        +------------v------------+                         |
+|                        |   RELEASE LOCK & STAMP  |                         |
+|                        | Sets lock=False, cooldown|                        |
+|                        +-------------------------+                         |
++----------------------------------------------------------------------------+
+```
+
+---
+
+## Detailed Working of the System
+
+### 1. Active Anomaly Triggers
+A background scheduler (`metrics_loop.py`) evaluates service metrics every 5 seconds. If latency, error rates, or CPU percentages breach critical thresholds, Vigil initiates an investigation. To prevent duplicate concurrent analyses, Vigil uses the database column `investigation_in_progress` on the `Service` table as a distributed lock. If locked, the breach is skipped. If free, the lock is acquired, and Phase 1 is scheduled.
+
+### 2. Phase 1: Hand-Written Tool-Calling Loop (Agentic AI)
+Phase 1 (`phase1_agent.py`) coordinates the diagnosis. Instead of relying on agent frameworks like LangChain, the investigation logic runs inside a manual loop that invokes the Groq API.
+* **Read-Only Constraints**: The LLM is provided with strictly read-only diagnostics (`get_metrics`, `get_logs`, `get_recent_deploys`, and `search_similar_incidents`). Commands that change state (e.g. `restart_service`) are physically absent from the tool definitions, ensuring the model cannot execute destructive commands.
+* **Retrieval-Augmented Generation (RAG)**: The `search_similar_incidents` tool converts incident symptoms into a vector embedding using a local `all-MiniLM-L6-v2` transformer model. It then performs a cosine similarity query on the PostgreSQL `past_incidents` table using the `pgvector` extension and an HNSW index, returning the top 3 matches to help ground the diagnosis.
+* **Structured Output**: The agent executes iterations until it stops requesting tool calls and returns a structured JSON payload with its root-cause hypothesis, confidence level (0-100), and recommended action.
+
+### 3. Phase 2: Deterministic Policy Gate (Safety)
+The policy engine (`policy_engine.py`) takes the JSON output and acts as the gatekeeper.
+* **Auto-Action Decision**: It checks if confidence is $\ge 80\%$, if the service is in the `ACTION_ALLOWLIST` (currently `checkout-api`), and if the service is simulated.
+  - **If Met**: It executes the python mitigation function (e.g., restarts the service or rolls back the latest deployment version in the DB). It then embeds this newly resolved case and adds it back to the RAG knowledge base so the agent learns from its success.
+  - **If Failed**: It falls back to paging a human through email/logging and marks the incident as `paged`.
+* **Guaranteed Release**: To avoid deadlock conditions, the lock release (`investigation_in_progress = False`) and the 120-second post-investigation cooldown timestamp are registered inside a `finally` block, guaranteeing execution even on system exceptions.
+
+### 4. Human-in-the-Loop Action
+For incidents that fail the auto-action gate, the React frontend displays a reasoning timeline showing the logs, metrics, RAG matches, confidence level, and an **"Approve Action"** button. Clicking this button triggers the `/api/incidents/{incident_id}/approve` endpoint, bypassing the LLM entirely and executing the Python mitigation action directly.
+
+---
+
 ## How to Run
 
 ### Prerequisite: Database Setup
@@ -68,19 +162,6 @@ To spin up the entire stack (PostgreSQL, pgvector, and the FastAPI backend) with
 docker-compose up --build
 ```
 *(Note: You will still need to run the React frontend locally at `http://localhost:3000` via npm or build the bundle).*
-
----
-
-## Architecture Overview
-Vigil enforces a strict **Two-Phase Architecture** to guarantee safety and predictability in automated production actions:
-1. **Phase 1: LLM-Based Diagnosis (Read-Only)**
-   The agent is configured as a hand-written execution loop (messages -> tool definitions -> tool dispatch) using the Groq API. It is given strictly read-only tools: `get_metrics`, `get_logs`, `get_recent_deploys`, and `search_similar_incidents`. The agent cannot restart services or perform deployments. It exits when it yields a structured JSON object containing its technical hypothesis, confidence, and recommended action.
-2. **Phase 2: Deterministic Python Safety Gate (Write Execution)**
-   The terminal JSON from Phase 1 is passed to a pure Python module (`policy_engine.py`) containing no LLM code. The gate executes auto-mitigation actions only if the following strict conditions are met:
-   - The diagnosis confidence score is $\ge 80\%$.
-   - The target service is explicitly listed in `ACTION_ALLOWLIST` (e.g. `checkout-api`).
-   - The service is NOT `local-host` (which is never auto-actioned).
-   Any failure to meet these parameters blocks the auto-action and falls back to a SMTP/logging page.
 
 ---
 
