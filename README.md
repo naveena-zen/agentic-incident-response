@@ -1,201 +1,147 @@
-# Vigil: Agentic AI + RAG for Autonomous Incident Response
+# Vigil: Autonomous Incident Response Agent Console
 
-Vigil is an autonomous, agentic AI incident response system designed as a working prototype to demonstrate the power of combining tool-augmented LLM reasoning, local retrieval-augmented generation (RAG) over historical incidents, and a deterministic safety policy. When a service threshold is breached, Vigil automatically coordinates a two-phase pipeline: Phase 1 engages a Groq-powered SRE agent running a hand-written execution loop that utilizes read-only diagnostic tools (logs, metrics, deploy history, and vector similarity search over pgvector) to diagnose the root cause, and Phase 2 passes this diagnostic hypothesis to a deterministic safety engine that executes automated mitigation actions (restarts, rollbacks) or alerts an on-call responder for manual approval.
-
----
-
-## Architecture Flow
-
-The workflow transitions from metrics collection to deterministic threshold checks, LLM-based RAG diagnosis, and deterministic safety-gated execution.
-
-```
-+----------------------------------------------------------------------------+
-|                          1. METRICS ENGINE (Background)                    |
-|  - psutil collects host stats. Synthetic loops simulate APIs.              |
-|  - Check thresholds: latency > 500ms | error > 5% | CPU > 85%              |
-+-------------------------------------+--------------------------------------+
-                                      |
-                            [Threshold Breach]
-                                      |
-+-------------------------------------v--------------------------------------+
-|                       2. RULE ENGINE & INVESTIGATION LOCK                  |
-|  - Checks service cooldown (120s) and investigation_in_progress flag       |
-|  - Sets lock = True, inserts Incident in DB, fires async investigation.    |
-+-------------------------------------+--------------------------------------+
-                                      |
-                                  [Fires]
-                                      |
-+-------------------------------------v--------------------------------------+
-|                     3. PHASE 1: AGENTIC AI & RAG DIAGNOSIS                 |
-|  - Hand-written loop executing OpenAI-compatible tool calls.               |
-|  - LLM is strictly READ-ONLY. Allowed tools:                               |
-|    - get_metrics(svc)                                                      |
-|    - get_logs(svc)                                                         |
-|    - get_recent_deploys(svc)                                               |
-|    - search_similar_incidents(query)  <-- RAG via local sentence-trans     |
-|                                           & pgvector HNSW index.           |
-|  - Loop terminates with JSON: Hypothesis, Confidence, Recommended Action.  |
-+-------------------------------------+--------------------------------------+
-                                      |
-                             [Outputs JSON]
-                                      |
-+-------------------------------------v--------------------------------------+
-|                    4. PHASE 2: DETERMINISTIC SAFETY POLICY                 |
-|  - Pure Python logic (No LLM calls). Checks conditions:                    |
-|    - Confidence >= 80%                                                     |
-|    - Service in Allowlist (e.g. checkout-api)                              |
-|    - Service is NOT local-host                                             |
-|                                                                            |
-|          [Passed]                                    [Blocked]             |
-|             |                                            |                 |
-|    +--------v--------+                         +---------v---------+       |
-|    |  AUTO-RESOLVE   |                         |    PAGE HUMAN     |       |
-|    | Restart/Rollback|                         | SMTP Log Fallback |       |
-|    +--------+--------+                         +---------+---------+       |
-|             |                                            |                 |
-|     (Adds to RAG KB)                                     |                 |
-|             |                                    [Human Click Approve]     |
-|             |                                            |                 |
-|             |                                  +---------v---------+       |
-|             |                                  | MANUAL MITIGATE   |       |
-|             |                                  | Executes action   |       |
-|             |                                  +---------+---------+       |
-|             +-----------------------+--------------------+                 |
-|                                     |                                      |
-|                             [Finally Block]                                |
-|                                     |                                      |
-|                        +------------v------------+                         |
-|                        |   RELEASE LOCK & STAMP  |                         |
-|                        | Sets lock=False, cooldown|                        |
-|                        +-------------------------+                         |
-+----------------------------------------------------------------------------+
-```
-
----
-
-## Detailed Working of the System
-
-### 1. Active Anomaly Triggers
-A background scheduler (`metrics_loop.py`) evaluates service metrics every 5 seconds. If latency, error rates, or CPU percentages breach critical thresholds, Vigil initiates an investigation. To prevent duplicate concurrent analyses, Vigil uses the database column `investigation_in_progress` on the `Service` table as a distributed lock. If locked, the breach is skipped. If free, the lock is acquired, and Phase 1 is scheduled.
-
-### 2. Phase 1: Hand-Written Tool-Calling Loop (Agentic AI)
-Phase 1 (`phase1_agent.py`) coordinates the diagnosis. Instead of relying on agent frameworks like LangChain, the investigation logic runs inside a manual loop that invokes the Groq API.
-* **Read-Only Constraints**: The LLM is provided with strictly read-only diagnostics (`get_metrics`, `get_logs`, `get_recent_deploys`, and `search_similar_incidents`). Commands that change state (e.g. `restart_service`) are physically absent from the tool definitions, ensuring the model cannot execute destructive commands.
-* **Retrieval-Augmented Generation (RAG)**: The `search_similar_incidents` tool converts incident symptoms into a vector embedding using a local `all-MiniLM-L6-v2` transformer model. It then performs a cosine similarity query on the PostgreSQL `past_incidents` table using the `pgvector` extension and an HNSW index, returning the top 3 matches to help ground the diagnosis.
-* **Structured Output**: The agent executes iterations until it stops requesting tool calls and returns a structured JSON payload with its root-cause hypothesis, confidence level (0-100), and recommended action.
-
-### 3. Phase 2: Deterministic Policy Gate (Safety)
-The policy engine (`policy_engine.py`) takes the JSON output and acts as the gatekeeper.
-* **Auto-Action Decision**: It checks if confidence is $\ge 80\%$, if the service is in the `ACTION_ALLOWLIST` (currently `checkout-api`), and if the service is simulated.
-  - **If Met**: It executes the python mitigation function (e.g., restarts the service or rolls back the latest deployment version in the DB). It then embeds this newly resolved case and adds it back to the RAG knowledge base so the agent learns from its success.
-  - **If Failed**: It falls back to paging a human through email/logging and marks the incident as `paged`.
-* **Guaranteed Release**: To avoid deadlock conditions, the lock release (`investigation_in_progress = False`) and the 120-second post-investigation cooldown timestamp are registered inside a `finally` block, guaranteeing execution even on system exceptions.
-
-### 4. Human-in-the-Loop Action
-For incidents that fail the auto-action gate, the React frontend displays a reasoning timeline showing the logs, metrics, RAG matches, confidence level, and an **"Approve Action"** button. Clicking this button triggers the `/api/incidents/{incident_id}/approve` endpoint, bypassing the LLM entirely and executing the Python mitigation action directly.
+Vigil is an autonomous incident response prototype. It uses a **two-phase architecture** that splits probabilistic diagnostic reasoning from deterministic safety controls. Under abnormal conditions, Vigil executes a read-only agent loop (Phase 1) using Groq API model instances to isolate issues, then hands off findings to a deterministic Python policy engine (Phase 2) for automated mitigation (such as simulated service restarts or rollbacks) or escalation (human paging).
 
 ---
 
 ## How to Run
 
 ### Prerequisite: Database Setup
-Ensure you have a PostgreSQL database running with the `pgvector` extension enabled.
-Connection URL settings should match the environment configuration below.
+Ensure a PostgreSQL database instance is running with `pgvector` enabled. For Windows users, a script is provided at [`install_pgvector.ps1`](file:///c:/Users/navee/OneDrive/Desktop/Vigil/install_pgvector.ps1) to copy extension binaries. In Docker environments, the Compose file automatically configures a PG database with pgvector.
 
-### Environment Configuration
-Create a `.env` file in the project root containing the following configurations (refer to `.env.example` for a template):
-```ini
-# Postgres Database Connection
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=vigil
-DB_USER=postgres
-DB_PASSWORD=postgres
+### Option 1: Running Locally (Backend & Frontend)
 
-# LLM API Settings (Groq)
-GROQ_API_KEY=your_groq_api_key_here
-GROQ_MODEL=llama-3.1-8b-instant
+1. **Setup Backend**:
+   Install requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   Start the FastAPI development server:
+   ```bash
+   python -m uvicorn main:app --host 0.0.0.0 --port 8000
+   ```
+   *Note: This automatically prepares the database schema, runs database seeding (adding 10 historical incidents with embeddings), starts the metrics loop scheduler, and launches the server.*
 
-# JWT Secret
-JWT_SECRET=supersecretjwtsigningkey_changeme
-JWT_ALGORITHM=HS256
-JWT_EXPIRE_MINUTES=480
+2. **Setup Frontend**:
+   Navigate to the frontend folder, install dependencies, and run:
+   ```bash
+   cd frontend
+   npm install
+   npm start
+   ```
+   *The React console will open at `http://localhost:3000`.*
 
-# SMTP Paging Settings (Optional — falls back to log if not configured)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your_gmail@gmail.com
-SMTP_PASSWORD=your_gmail_app_password
-ALERT_EMAIL_TO=your_alert_recipient@example.com
-```
+3. **Verify Installation**:
+   Verify the endpoints are running by executing the smoke test script:
+   ```bash
+   python smoke_test.py
+   ```
 
-### Running Locally
-
-#### 1. Setup Backend
-Install Python dependencies (requires Python 3.10+):
-```bash
-pip install -r requirements.txt
-```
-
-Launch the Uvicorn development server:
-```bash
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
-```
-This automatically initializes the Postgres schema, runs the seed script (populating 10 historical incidents with local embeddings), and starts the background metrics loop.
-
-#### 2. Setup Frontend
-Navigate to the frontend directory:
-```bash
-cd frontend
-npm install
-```
-
-Start the React development server:
-```bash
-npm start
-```
-The React monitoring dashboard will be available at `http://localhost:3000`.
-
-### Running via Docker Compose
-To spin up the entire stack (PostgreSQL, pgvector, and the FastAPI backend) with a single command:
+### Option 2: Running via Docker Compose
+Build and start the containerized PostgreSQL and FastAPI backend:
 ```bash
 docker-compose up --build
 ```
-*(Note: You will still need to run the React frontend locally at `http://localhost:3000` via npm or build the bundle).*
+*Note: The frontend must still be run locally at `http://localhost:3000` using Node/NPM.*
 
 ---
 
-## Tech Stack
-- **Backend Framework**: FastAPI (asyncio)
-- **Database ORM**: SQLAlchemy (asyncpg)
-- **Database Engine**: PostgreSQL with `pgvector`
-- **Embedding Model**: `sentence-transformers` (`all-MiniLM-L6-v2` loaded locally, no external API)
-- **LLM Engine**: Groq API (`llama-3.1-8b-instant` / `llama-3.3-70b-versatile`)
-- **Frontend Dashboard**: React.js with Chart.js line charts
-- **Metrics & Logging**: `psutil` (host metrics) and `prometheus-client` (:8000/metrics)
-- **Containerization**: Docker & Docker Compose
+## Features (Verified)
+* **Background Monitoring Tick**: Regularly records real CPU and memory metrics for the local host via `psutil` and generates simulated metrics for internal services (`metrics_loop.py` lines 246-309).
+* **Threshold Alarm Engine**: Triggers an alert when metrics exceed thresholds (latency > 500ms, error rate > 5%, or CPU > 85%) and reserves a service-level lock (`Service.investigation_in_progress`) to block duplicate runs (`metrics_loop.py` lines 174-201).
+* **AI Diagnostics Loop (Phase 1)**: Iterates a read-only OpenAI-compatible (Groq) tool calling agent to examine server context (`phase1_agent.py` lines 279-395).
+* **Local Semantic RAG**: Matches incident symptoms to historical documents in PostgreSQL using a local SentenceTransformer (`all-MiniLM-L6-v2`) and a pgvector HNSW index (`phase1_agent.py` lines 217-243).
+* **Action Policy Gates (Phase 2)**: Evaluates agent output deterministic policies (rules, confidence, allowlist) to trigger mock recoveries or page handlers (`policy_engine.py` lines 163-260).
+* **Interactive SRE Console**: Presents incident details, metrics, logs, and a timeline. Awaiting escalations can be resolved using the "Approve Action" console button, which directly bypasses the LLM (`frontend/src/App.js`).
+* **Prometheus Instrumentation**: Exposes metrics counters for route performance and incident monitoring on `/metrics` (`main.py` lines 56-61).
+* **JWT Access Security**: Secures endpoints against unauthorized modifications (`auth.py`).
 
 ---
 
-## Features
-- **Deterministic Trigger**: Threshold rule engine (latency > 500ms, error rate > 5%, or host CPU > 85%) fires investigations.
-- **Investigation Lock**: Distributed lock flag (`investigation_in_progress`) prevents redundant concurrent diagnostic runs on the same service.
-- **Local RAG Integration**: Cosine similarity search over past incidents via local SentenceTransformers model.
-- **Auto-Mitigation**: Automatically performs restarts or mark rollbacks in the DB if the safety policy is satisfied.
-- **Human-in-the-Loop Approval**: Incident dashboard with detailed diagnostic timelines and an "Approve Action" button for paged incidents.
-- **JWT Authentication**: Protected REST endpoints, including secure debug routes.
-- **Prometheus Metrics**: High-availability monitoring indicators on endpoint latencies and incident rates.
+## Configuration
+
+### Environment Variables
+Vigil reads configurations from a root `.env` file. Below are all environment variables verified in code:
+
+| Variable | Description | Default in Code |
+| :--- | :--- | :--- |
+| `DB_HOST` | Hostname of the PostgreSQL server. | `localhost` |
+| `DB_PORT` | Port of the PostgreSQL server. | `5432` |
+| `DB_NAME` | Database name. | `vigil` |
+| `DB_USER` | Username for database connection. | `postgres` |
+| `DB_PASSWORD` | Password for database connection. | `postgres` |
+| `GROQ_API_KEY` | Authentication key for Groq Cloud API endpoints. | `""` (Required) |
+| `GROQ_MODEL` | Groq LLM model used for diagnostic analysis. | `llama-3.3-70b-versatile` |
+| `AGENT_MAX_ITERATIONS` | Max number of tool calls during Phase 1. | `10` |
+| `JWT_SECRET` | Signing secret for JSON Web Tokens. | `supersecretjwtsigningkey_changeme` |
+| `JWT_ALGORITHM` | Algorithm for signing JWT tokens. | `HS256` |
+| `JWT_EXPIRE_MINUTES` | Expiry duration for user tokens (in minutes). | `480` |
+| `DEMO_USERNAME` | Administrator login username. | `admin` |
+| `DEMO_PASSWORD` | Administrator login password. | `vigil2025` |
+| `SMTP_HOST` | Host address of target SMTP mail server. | `smtp.gmail.com` |
+| `SMTP_PORT` | Port of target SMTP mail server. | `587` |
+| `SMTP_USER` | Username for SMTP authentication. | `""` |
+| `SMTP_PASSWORD` | App password for SMTP authentication. | `""` |
+| `ALERT_EMAIL_TO` | Email address to receive alerts. | `(SMTP_USER)` |
+| `METRICS_INTERVAL_SECONDS` | Schedule interval (seconds) for metrics aggregation ticks. | `5` |
+| `ANOMALY_MIN_INTERVAL` | Minimum delay (seconds) between random anomaly injections. | `30` |
+| `ANOMALY_MAX_INTERVAL` | Maximum delay (seconds) between random anomaly injections. | `60` |
 
 ---
 
-## Safety Design
-- **Separation of Concerns**: Diagnostic reasoning is separated from action execution to eliminate LLM hallucinations leading to wild infrastructure commands.
-- **Locked Cooldowns**: Enforces a 120-second cooldown window post-investigation to prevent rule-engine cascade loops.
-- **Guaranteed Lock Release**: Lock states are released in a `try/finally` block to ensure a single crash (e.g., SMTP timeout) doesn't permanently lock down a service.
+## Usage
+1. **Login**: Access the web UI at `http://localhost:3000` and login using credentials defined by `DEMO_USERNAME` / `DEMO_PASSWORD` (defaults: `admin` / `vigil2025`).
+2. **Injecting Anomaly**: Click the **Inject anomaly** button on the top-right header to manually inject a `high_latency` error into the simulated `checkout-api`.
+3. **Tracking Incident**: Observe the logs, metrics, and incoming investigations in the **Incidents** section. If the issue affects `checkout-api` and confidence is $\ge 80\%$, the engine auto-mitigates and displays the results. If it affects any other service or has low confidence, it waits for human approval.
+4. **Manual Approval**: For paged events, review the reasoning timeline and click the **Approve action** button to resolve it.
 
 ---
 
-## Known Limitations
-- **Simulated Infrastructure**: Service rollbacks and restarts are mocked on memory/db states rather than executing on live cloud infrastructure.
-- **Tokens-Per-Minute Quotas**: High metric and log trace sizes can hit free-tier Groq API TPM limits under parallel multi-service anomalies.
-- **Host Metrics Caveat**: Host CPU and memory measurements utilize the server's local environment where the Python process is executed.
+## Folder Structure
+```
+.
+├── auth.py                  # JWT credential authentication checks
+├── database.py              # PostgreSQL database initialization & SQLAlchemy ORM mapping
+├── Dockerfile               # Build configuration for running the FastAPI application
+├── docker-compose.yml       # Configuration for deploying Postgres DB and API service
+├── install_pgvector.ps1     # Powershell installation script for pgvector (Windows local)
+├── main.py                  # FastAPI application entry points, endpoints & scheduler tasks
+├── metrics_loop.py          # Background metric collection & threshold rule evaluator
+├── notifications.py         # SMTP email paging and fallback logging mechanisms
+├── phase1_agent.py          # SRE agent tool-calling loop utilizing the Groq SDK
+├── policy_engine.py         # Safety allowlists, mock actions, and RAG compilation
+├── requirements.txt         # List of Python dependencies
+├── seed.py                  # Seeding script for services, deploys, and vector data
+├── smoke_test.py            # Local endpoint integration verification test script
+├── docs/                    # Architecture diagrams, reports, assessment, and roadmaps
+└── frontend/                # React dashboard frontend project files
+    ├── package.json         # Node.js dependencies
+    └── src/                 # React component source code
+```
+
+---
+
+## Architecture
+Vigil uses a decoupled pipeline to prevent LLM hallucinations from causing uncontrolled infrastructure actions:
+1. **Metrics Engine & Rules**: Triggers incidents when metric thresholds are breached and sets a database-level lock.
+2. **Phase 1 (Diagnostic Agent)**: Explores diagnostics using strictly read-only tools (`get_metrics`, `get_logs`, `get_recent_deploys`, `search_similar_incidents`). No action-executing tools are defined in the LLM context.
+3. **Phase 2 (Safety Policy)**: Evaluates the LLM's diagnostic JSON output using a deterministic Python engine. If safety criteria (service allowlist, confidence threshold) are satisfied, it executes a simulated action. Otherwise, it sends a page to a human operator.
+4. **Human Review**: A human operator can review the timeline on the React console and manually approve the recovery action.
+
+For detailed sequence diagrams, system component maps, and data flow visualizations, see the [Architecture Diagrams Document](file:///c:/Users/navee/OneDrive/Desktop/Vigil/docs/ARCHITECTURE_DIAGRAMS.md).
+
+---
+
+## Future Enhancements
+* Transition mock actions into actual provider integration (e.g. AWS ECS/EKS task restarts).
+* Replace in-memory anomaly and cooldown variables with distributed storage models (e.g. Redis).
+* Eliminate CPU-blocking calls in the API event loop by executing embeddings calculations inside thread executors or microservices.
+* Implement role-based authorization to secure administrative API routes.
+
+---
+
+## Contribution Guide
+1. **Fork the Repository**: Ensure changes are committed to functional feature branches.
+2. **Linting & Formatting**: Follow pep8 conventions for python code.
+3. **Dependency Injection**: Add new backend packages directly to `requirements.txt`.
+4. **Test Coverage**: Run `smoke_test.py` to ensure core endpoints operate successfully before merging.
