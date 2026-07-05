@@ -1,4 +1,4 @@
-# Vigil: Autonomous Incident Response Agent Console
+# Vigil: Autonomous Incident Response Agent
 
 Vigil is an autonomous incident response prototype. It uses a **two-phase architecture** that splits probabilistic diagnostic reasoning from deterministic safety controls. Under abnormal conditions, Vigil executes a read-only agent loop (Phase 1) using Groq API model instances to isolate issues, then hands off findings to a deterministic Python policy engine (Phase 2) for automated mitigation (such as simulated service restarts or rollbacks) or escalation (human paging).
 
@@ -46,7 +46,7 @@ docker-compose up --build
 
 ---
 
-## Features (Verified)
+## Features 
 * **Background Monitoring Tick**: Regularly records real CPU and memory metrics for the local host via `psutil` and generates simulated metrics for internal services (`metrics_loop.py` lines 246-309).
 * **Threshold Alarm Engine**: Triggers an alert when metrics exceed thresholds (latency > 500ms, error rate > 5%, or CPU > 85%) and reserves a service-level lock (`Service.investigation_in_progress`) to block duplicate runs (`metrics_loop.py` lines 174-201).
 * **AI Diagnostics Loop (Phase 1)**: Iterates a read-only OpenAI-compatible (Groq) tool calling agent to examine server context (`phase1_agent.py` lines 279-395).
