@@ -58,37 +58,6 @@ docker-compose up --build
 
 ---
 
-## Configuration
-
-### Environment Variables
-Vigil reads configurations from a root `.env` file. Below are all environment variables verified in code:
-
-| Variable | Description | Default in Code |
-| :--- | :--- | :--- |
-| `DB_HOST` | Hostname of the PostgreSQL server. | `localhost` |
-| `DB_PORT` | Port of the PostgreSQL server. | `5432` |
-| `DB_NAME` | Database name. | `vigil` |
-| `DB_USER` | Username for database connection. | `postgres` |
-| `DB_PASSWORD` | Password for database connection. | `postgres` |
-| `GROQ_API_KEY` | Authentication key for Groq Cloud API endpoints. | `""` (Required) |
-| `GROQ_MODEL` | Groq LLM model used for diagnostic analysis. | `llama-3.3-70b-versatile` |
-| `AGENT_MAX_ITERATIONS` | Max number of tool calls during Phase 1. | `10` |
-| `JWT_SECRET` | Signing secret for JSON Web Tokens. | `supersecretjwtsigningkey_changeme` |
-| `JWT_ALGORITHM` | Algorithm for signing JWT tokens. | `HS256` |
-| `JWT_EXPIRE_MINUTES` | Expiry duration for user tokens (in minutes). | `480` |
-| `DEMO_USERNAME` | Administrator login username. | `admin` |
-| `DEMO_PASSWORD` | Administrator login password. | `vigil2025` |
-| `SMTP_HOST` | Host address of target SMTP mail server. | `smtp.gmail.com` |
-| `SMTP_PORT` | Port of target SMTP mail server. | `587` |
-| `SMTP_USER` | Username for SMTP authentication. | `""` |
-| `SMTP_PASSWORD` | App password for SMTP authentication. | `""` |
-| `ALERT_EMAIL_TO` | Email address to receive alerts. | `(SMTP_USER)` |
-| `METRICS_INTERVAL_SECONDS` | Schedule interval (seconds) for metrics aggregation ticks. | `5` |
-| `ANOMALY_MIN_INTERVAL` | Minimum delay (seconds) between random anomaly injections. | `30` |
-| `ANOMALY_MAX_INTERVAL` | Maximum delay (seconds) between random anomaly injections. | `60` |
-
----
-
 ## Usage
 1. **Login**: Access the web UI at `http://localhost:3000` and login using credentials defined by `DEMO_USERNAME` / `DEMO_PASSWORD` (defaults: `admin` / `vigil2025`).
 2. **Injecting Anomaly**: Click the **Inject anomaly** button on the top-right header to manually inject a `high_latency` error into the simulated `checkout-api`.
