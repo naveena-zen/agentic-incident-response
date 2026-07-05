@@ -1,4 +1,4 @@
-# Vigil: Autonomous Incident Response Agent
+# Vigil — Autonomous Incident Response Agent with RAG-Grounded Root-Cause Reasoning
 
 Vigil is an autonomous incident response prototype. It uses a **two-phase architecture** that splits probabilistic diagnostic reasoning from deterministic safety controls. Under abnormal conditions, Vigil executes a read-only agent loop (Phase 1) using Groq API model instances to isolate issues, then hands off findings to a deterministic Python policy engine (Phase 2) for automated mitigation (such as simulated service restarts or rollbacks) or escalation (human paging).
 
