@@ -23,6 +23,7 @@ DESIGN INVARIANT (enforced here):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -39,6 +40,9 @@ from seed import embed
 logger = logging.getLogger(__name__)
 
 # ── Groq client (OpenAI-compatible) ───────────────────────────────────────────
+if not os.getenv("GROQ_API_KEY"):
+    raise RuntimeError("GROQ_API_KEY environment variable is required")
+
 _client = AsyncOpenAI(
     api_key=os.getenv("GROQ_API_KEY", ""),
     base_url="https://api.groq.com/openai/v1",
@@ -215,7 +219,7 @@ async def _get_recent_deploys(service: str) -> dict:
 
 
 async def _search_similar(query_text: str, top_k: int = 3) -> dict:
-    vec = embed(query_text)
+    vec = await asyncio.get_event_loop().run_in_executor(None, embed, query_text)
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
             select(
@@ -383,6 +387,7 @@ async def run_phase1(incident_id: str, service: str, trigger_reason: str) -> dic
                 inc.confidence                  = float(terminal_json.get("confidence", 0))
                 inc.reasoning                   = terminal_json.get("reasoning", "")
                 inc.referenced_similar_incident = terminal_json.get("referenced_similar_incident")
+                inc.recommended_action          = terminal_json.get("recommended_action")
             else:
                 inc.root_cause_hypothesis = "Phase 1 timed out — no conclusive hypothesis"
                 inc.confidence = 0

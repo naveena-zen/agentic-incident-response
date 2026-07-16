@@ -32,7 +32,7 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - GROQ_API_KEY=${GROQ_API_KEY:-your_groq_api_key_here}
-      - GROQ_MODEL=${GROQ_MODEL:-llama-3.1-8b-instant}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
       - AGENT_MAX_ITERATIONS=10
       - METRICS_INTERVAL_SECONDS=5
     depends_on:

@@ -208,7 +208,10 @@ async def _rule_engine_check(service: str, metrics: dict) -> None:
         return
 
     async with AsyncSessionLocal() as db:
-        svc_row = await db.get(Service, service)
+        # Acquire row-level write lock on the Service table to prevent concurrent lock checks
+        stmt = select(Service).where(Service.name == service).with_for_update()
+        result = await db.execute(stmt)
+        svc_row = result.scalar_one_or_none()
         if not svc_row:
             return
 

@@ -20,6 +20,7 @@ openai==1.35.3          # xAI Grok uses OpenAI-compatible SDK
 # ── Auth ──────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==3.2.0
 
 # ── Monitoring & system stats ─────────────────────────────
 psutil==5.9.8
@@ -39,3 +40,7 @@ numpy>=1.26.4
 
 # ── Load testing (optional, separate process) ─────────────
 locust==2.29.1
+
+# ── Notifications ──────────────────────────────────────────
+aiosmtplib==3.0.1
+

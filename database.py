@@ -51,7 +51,9 @@ _HOST = os.getenv("DB_HOST", "localhost")
 _PORT = os.getenv("DB_PORT", "5432")
 _NAME = os.getenv("DB_NAME", "vigil")
 _USER = os.getenv("DB_USER", "postgres")
-_PASS = os.getenv("DB_PASSWORD", "postgres")
+_PASS = os.getenv("DB_PASSWORD")
+if not _PASS:
+    raise RuntimeError("DB_PASSWORD environment variable is required")
 
 DATABASE_URL      = f"postgresql+asyncpg://{_USER}:{_PASS}@{_HOST}:{_PORT}/{_NAME}"
 DATABASE_URL_SYNC = f"postgresql+psycopg2://{_USER}:{_PASS}@{_HOST}:{_PORT}/{_NAME}"
@@ -122,7 +124,7 @@ class ServiceMetric(Base):
     latency_ms   = Column(Float,   nullable=True)
     error_rate   = Column(Float,   nullable=True)
     request_rate = Column(Float,   nullable=True)
-    is_anomaly   = Column(Boolean, nullable=False, default=False)
+    is_anomaly   = Column(Boolean, nullable=False, default=False, index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -136,7 +138,7 @@ class ServiceLog(Base):
     timestamp          = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     level              = Column(String(16),  nullable=False, default="INFO")
     message            = Column(Text,        nullable=False)
-    is_anomaly_related = Column(Boolean,     nullable=False, default=False)
+    is_anomaly_related = Column(Boolean,     nullable=False, default=False, index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -183,6 +185,7 @@ class Incident(Base):
     confidence                   = Column(Float,   nullable=True)   # 0-100
     reasoning                    = Column(Text,    nullable=True)
     referenced_similar_incident  = Column(Text,    nullable=True)   # title of top RAG hit
+    recommended_action           = Column(String(64),  nullable=True) # recommended by Phase 1 LLM
     phase1_tool_call_trace       = Column(Text,    nullable=True)   # JSON list
 
     # Phase 2 output (policy_engine, deterministic Python)
@@ -227,6 +230,11 @@ async def create_all_tables() -> None:
     2. Creates all tables (CREATE TABLE IF NOT EXISTS semantics via SQLAlchemy).
     3. Creates HNSW cosine index on past_incidents.embedding.
     """
+    # Fail startup if required env secrets are missing
+    for var in ["GROQ_API_KEY", "JWT_SECRET", "DEMO_PASSWORD", "DB_PASSWORD"]:
+        if not os.getenv(var):
+            raise RuntimeError(f"{var} environment variable is required")
+
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
@@ -234,4 +242,12 @@ async def create_all_tables() -> None:
             CREATE INDEX IF NOT EXISTS idx_past_incidents_embedding
             ON past_incidents
             USING hnsw (embedding vector_cosine_ops)
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_service_metrics_is_anomaly
+            ON service_metrics (is_anomaly)
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_service_logs_is_anomaly_related
+            ON service_logs (is_anomaly_related)
         """))

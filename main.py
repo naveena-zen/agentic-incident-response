@@ -26,7 +26,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
@@ -143,9 +143,11 @@ app = FastAPI(
 )
 
 # CORS must be first
+allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000")
+allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -172,8 +174,55 @@ app.add_middleware(PrometheusMiddleware)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/health", tags=["system"])
-async def health():
-    return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
+async def health(db: AsyncSession = Depends(get_db)):
+    # 1. DB Check
+    db_status = "healthy"
+    try:
+        await db.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"unhealthy: {e}"
+
+    # 2. Groq API Check (does not make a chat completion, just pings models endpoint to verify key/quota)
+    groq_status = "unconfigured"
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {groq_key}"})
+                if resp.status_code == 200:
+                    groq_status = "connected"
+                else:
+                    groq_status = f"error (code {resp.status_code})"
+        except Exception as e:
+            groq_status = f"error: {e}"
+
+    # 3. SMTP Check (checks if email is configured and SMTP server is reachable)
+    from notifications import SMTP_HOST, SMTP_PORT
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASSWORD", "")
+    smtp_configured = bool(smtp_user and smtp_pass and "your_gmail" not in smtp_user)
+    smtp_status = "fallback_logging"
+    if smtp_configured:
+        try:
+            import aiosmtplib
+            smtp = aiosmtplib.SMTP(hostname=SMTP_HOST, port=SMTP_PORT, use_tls=False)
+            await smtp.connect(timeout=2.0)
+            await smtp.quit()
+            smtp_status = "connected"
+        except Exception as e:
+            smtp_status = f"error: {e}"
+
+    is_ok = (db_status == "healthy") and (not groq_key or "error" not in groq_status)
+    return {
+        "status": "ok" if is_ok else "degraded",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "details": {
+            "database": db_status,
+            "groq_api": groq_status,
+            "smtp": smtp_status
+        }
+    }
 
 
 @app.get("/metrics", tags=["system"])
@@ -186,12 +235,12 @@ async def get_metrics_endpoint():
 # AUTHENTICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-from auth import LoginRequest, Token, create_access_token, get_current_user, verify_password
+from auth import DEMO_USER, DEMO_PASS_HASH, LoginRequest, Token, create_access_token, get_current_user, verify_password
 
 @app.post("/api/auth/login", response_model=Token, tags=["auth"])
 async def login(req: LoginRequest):
-    # verify_password handles checking against DEMO_PASS
-    if not verify_password(req.password, "") or req.username != "admin":
+    # verify_password now compares strictly against the hashed DEMO_PASSWORD
+    if req.username != DEMO_USER or not verify_password(req.password, DEMO_PASS_HASH):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     
     from datetime import timedelta
@@ -341,6 +390,7 @@ def _inc_to_dict(r: Incident) -> dict[str, Any]:
         "confidence":                  r.confidence,
         "reasoning":                   r.reasoning,
         "referenced_similar_incident": r.referenced_similar_incident,
+        "recommended_action":          r.recommended_action,
         "action_taken":                r.action_taken,
         "action_detail":               r.action_detail,
         "approved_by":                 r.approved_by,
@@ -452,9 +502,11 @@ async def trigger_anomaly(service: str = "checkout-api", anomaly_type: str = "hi
 @app.post("/api/debug/trigger-investigation", dependencies=[Depends(get_current_user)], tags=["debug"])
 async def trigger_investigation(service: str = "checkout-api", reason: str = "manual test"):
     """Directly fire the investigation pipeline for testing (bypasses threshold check)."""
-    # Check lock first
+    # Check lock first with row lock
     async with AsyncSessionLocal() as db:
-        svc = await db.get(Service, service)
+        stmt = select(Service).where(Service.name == service).with_for_update()
+        result = await db.execute(stmt)
+        svc = result.scalar_one_or_none()
         if not svc:
             raise HTTPException(404, f"Service {service} not found")
         if svc.investigation_in_progress:

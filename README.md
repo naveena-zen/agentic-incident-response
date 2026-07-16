@@ -2,6 +2,71 @@
 
 Vigil is an autonomous incident response prototype. It uses a **two-phase architecture** that splits probabilistic diagnostic reasoning from deterministic safety controls. Under abnormal conditions, Vigil executes a read-only agent loop (Phase 1) using Groq API model instances to isolate issues, then hands off findings to a deterministic Python policy engine (Phase 2) for automated mitigation (such as simulated service restarts or rollbacks) or escalation (human paging).
 
+## System Architecture
+
+```mermaid
+graph TD
+    %% Frontend Layer
+    subgraph Frontend [Frontend Console - React]
+        Dashboard["SRE Interactive Dashboard"]
+        ApproveAction["Human approval ('Approve Action' endpoint)"]
+    end
+
+    %% Backend Layer
+    subgraph Backend [Backend API - FastAPI]
+        Auth["JWT Auth (bcrypt)"]
+        MetricsCollector["Metrics Collector (psutil / synthetic)"]
+        RuleEngine["Rule Engine (threshold monitoring)"]
+        
+        subgraph AgentFlow [Two-Phase Incident Response Agent]
+            Phase1["Phase 1: LLM Read-Only Diagnosis<br>(Groq Tool-Calling Loop)"]
+            Phase2["Phase 2: Deterministic Python Policy Gate<br>(Confidence >= 80% & Service Allowlisted?)"]
+            AutoAction["Auto-Mitigation Engine<br>(Restart service / Rollback deploy)"]
+            Escalator["Escalator & Alerting"]
+        end
+    end
+
+    %% Storage Layer
+    subgraph DB [Database - PostgreSQL with pgvector]
+        Tables["Tables: metrics, logs, deploys, incidents"]
+        VectorDB["past_incidents (with HNSW index)"]
+    end
+
+    %% External Services
+    subgraph ExtServices [External Services]
+        LLM_API["Groq LLM API (llama-3.3-70b-versatile)"]
+        SMTP["SMTP Mail Server (Optional)"]
+    end
+
+    %% Connections
+    Dashboard -->|Login & API Requests| Auth
+    Dashboard -->|Approve Action| ApproveAction
+    ApproveAction -->|Direct Python Action| AutoAction
+    MetricsCollector -->|Write snap/metrics/logs| Tables
+    MetricsCollector -->|Trigger anomaly check| RuleEngine
+    RuleEngine -->|If anomaly detected & lock acquired| Phase1
+    
+    %% Phase 1
+    Phase1 -->|Read context| Tables
+    Phase1 -->|Semantic search (vector embeddings)| VectorDB
+    Phase1 <-->|Tool calls / completions| LLM_API
+    Phase1 -->|Terminal JSON| Phase2
+    
+    %% Phase 2
+    Phase2 -->|Yes: Auto-Act| AutoAction
+    Phase2 -->|No: Page SRE| Escalator
+    
+    %% Actions & Escalations
+    AutoAction -->|MOCK Action: Clear anomaly / Mark rolled_back| Tables
+    AutoAction -->|Insert resolved incident to RAG| VectorDB
+    Escalator -->|Send Email alert| SMTP
+    Escalator -->|Fallback logs| Tables
+    Escalator -->|Set Status = paged| Tables
+
+    classDef layer stroke:#333,stroke-width:2px;
+    class Frontend,Backend,DB,ExtServices layer;
+```
+
 ---
 
 ## How to Run
@@ -66,6 +131,15 @@ docker-compose up --build
 
 ---
 
+## Known Limitations
+
+As an architectural prototype designed for demonstrating autonomous SRE incident response patterns, Vigil contains the following intentional design simplifications:
+* **SMTP Fallback**: Real email alerting requires configuring `SMTP_USER` and `SMTP_PASSWORD` in `.env`. When unconfigured, Vigil falls back to writing alert payloads to structured application logs to prevent silent alert drop.
+* **Single Demo User**: Authentication uses a single hardcoded demo user (`admin` / `vigil2025`) for dashboard operations, rather than a full multi-tenant IAM database.
+* **Mocked Services & Actions**: Since real cloud providers are out of scope for a self-contained local workspace, service metrics generation, logging, container restarts, and deployments rollbacks are mocked using local in-memory triggers and simulated database updates.
+
+---
+
 ## Folder Structure
 ```
 .
@@ -86,6 +160,7 @@ docker-compose up --build
 └── frontend/                # React dashboard frontend project files
     ├── package.json         # Node.js dependencies
     └── src/                 # React component source code
+        └── App.js           # Main frontend React client
 ```
 
 ---
@@ -96,8 +171,6 @@ Vigil uses a decoupled pipeline to prevent LLM hallucinations from causing uncon
 2. **Phase 1 (Diagnostic Agent)**: Explores diagnostics using strictly read-only tools (`get_metrics`, `get_logs`, `get_recent_deploys`, `search_similar_incidents`). No action-executing tools are defined in the LLM context.
 3. **Phase 2 (Safety Policy)**: Evaluates the LLM's diagnostic JSON output using a deterministic Python engine. If safety criteria (service allowlist, confidence threshold) are satisfied, it executes a simulated action. Otherwise, it sends a page to a human operator.
 4. **Human Review**: A human operator can review the timeline on the React console and manually approve the recovery action.
-
-For detailed sequence diagrams, system component maps, and data flow visualizations, see the [Architecture Diagrams Document](file:///c:/Users/navee/OneDrive/Desktop/Vigil/docs/ARCHITECTURE_DIAGRAMS.md).
 
 ---
 

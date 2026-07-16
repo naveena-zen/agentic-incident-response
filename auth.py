@@ -15,14 +15,20 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 
 # ── Config ────────────────────────────────────────────────────────────────────
-JWT_SECRET    = os.getenv("JWT_SECRET", "supersecretjwtsigningkey_changeme")
+JWT_SECRET    = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET environment variable is required")
+
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRE_MINS   = int(os.getenv("JWT_EXPIRE_MINUTES", "480"))
 
 DEMO_USER = os.getenv("DEMO_USERNAME", "admin")
-DEMO_PASS = os.getenv("DEMO_PASSWORD", "vigil2025")
+DEMO_PASS = os.getenv("DEMO_PASSWORD")
+if not DEMO_PASS:
+    raise RuntimeError("DEMO_PASSWORD environment variable is required")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+DEMO_PASS_HASH = pwd_context.hash(DEMO_PASS)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -37,9 +43,6 @@ class LoginRequest(BaseModel):
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    # Handle plain-text comparison for demo simplicity, or bcrypt
-    if plain == DEMO_PASS:
-        return True
     try:
         return pwd_context.verify(plain, hashed)
     except Exception:

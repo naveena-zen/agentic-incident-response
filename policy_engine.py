@@ -278,19 +278,19 @@ async def execute_approved_action(incident_id: str, approved_by: str = "demo-use
 
     service            = inc.service
     hypothesis         = inc.root_cause_hypothesis or ""
-    recommended_action = "restart"  # default; parse from action_detail if available
+    recommended_action = inc.recommended_action
 
-    # Try to infer recommended_action from Phase 1 output
-    try:
-        if inc.phase1_tool_call_trace:
-            pass  # could parse, but recommended_action is embedded in incident if we stored it
-    except Exception:
-        pass
-
-    logger.info("👍 Human approved action for incident=%s service=%s", incident_id, service)
-
-    try:
+    if not recommended_action:
+        # Fallback to parsing hypothesis or action_detail for backwards compatibility
         if "rollback" in (inc.action_detail or "").lower() or "rollback" in hypothesis.lower():
+            recommended_action = "rollback"
+        else:
+            recommended_action = "restart"
+
+    logger.info("👍 Human approved action for incident=%s service=%s action=%s", incident_id, service, recommended_action)
+
+    try:
+        if recommended_action == "rollback":
             result = await rollback_deploy(service, f"Human-approved (incident {incident_id})")
         else:
             result = await restart_service(service, f"Human-approved (incident {incident_id})")

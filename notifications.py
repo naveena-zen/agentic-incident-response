@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import smtplib
+import aiosmtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -17,6 +17,7 @@ SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+# Any hardcoded defaults or credentials check
 ALERT_TO      = os.getenv("ALERT_EMAIL_TO", SMTP_USER)
 
 _CONFIGURED = bool(SMTP_USER and SMTP_PASSWORD and "your_gmail" not in SMTP_USER)
@@ -47,30 +48,6 @@ def _build_html(incident_id, service, summary, hypothesis, recommended_action, c
 </div></body></html>"""
 
 
-def _send_sync(incident_id, service, summary, hypothesis, recommended_action, confidence):
-    html = _build_html(incident_id, service, summary, hypothesis, recommended_action, confidence)
-    plain = f"VIGIL ALERT\nService: {service}\nConfidence: {confidence:.0f}%\n\n{summary}\n\nHypothesis: {hypothesis}\nAction: {recommended_action}"
-    subject = f"[VIGIL] {service} needs attention — confidence {confidence:.0f}%"
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"Vigil <{SMTP_USER}>"
-    msg["To"]      = ALERT_TO
-    msg.attach(MIMEText(plain, "plain"))
-    msg.attach(MIMEText(html,  "html"))
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
-            s.ehlo(); s.starttls(); s.ehlo()
-            s.login(SMTP_USER, SMTP_PASSWORD)
-            s.sendmail(SMTP_USER, [ALERT_TO], msg.as_string())
-        logger.info("📧 Alert email sent for incident %s", incident_id)
-        return {"success": True}
-    except Exception as exc:
-        logger.error("📧 SMTP failed: %s", exc)
-        return {"success": False, "error": str(exc)}
-
-
 async def send_page_email(incident_id, service, summary, root_cause_hypothesis,
                           recommended_action, confidence) -> dict:
     logger.warning(
@@ -90,7 +67,33 @@ async def send_page_email(incident_id, service, summary, root_cause_hypothesis,
         )
         return {"success": False, "error": "SMTP not configured — email logged as fallback"}
 
-    return await asyncio.to_thread(
-        _send_sync, incident_id, service, summary,
-        root_cause_hypothesis, recommended_action, confidence,
-    )
+    html = _build_html(incident_id, service, summary, root_cause_hypothesis, recommended_action, confidence)
+    plain = f"VIGIL ALERT\nService: {service}\nConfidence: {confidence:.0f}%\n\n{summary}\n\nHypothesis: {root_cause_hypothesis}\nAction: {recommended_action}"
+    subject = f"[VIGIL] {service} needs attention — confidence {confidence:.0f}%"
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"Vigil <{SMTP_USER}>"
+    msg["To"]      = ALERT_TO
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html,  "html"))
+
+    try:
+        smtp = aiosmtplib.SMTP(
+            hostname=SMTP_HOST,
+            port=SMTP_PORT,
+            use_tls=(SMTP_PORT == 465),
+            timeout=10,
+        )
+        await smtp.connect()
+        if SMTP_PORT == 587:
+            await smtp.starttls()
+        await smtp.login(SMTP_USER, SMTP_PASSWORD)
+        await smtp.send_message(msg)
+        await smtp.quit()
+        logger.info("📧 Alert email sent for incident %s", incident_id)
+        return {"success": True}
+    except Exception as exc:
+        logger.error("📧 SMTP failed: %s", exc)
+        return {"success": False, "error": str(exc)}
+
