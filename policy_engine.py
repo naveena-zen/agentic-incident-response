@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -40,7 +41,7 @@ CONFIDENCE_THRESHOLD = 80
 # Services that CAN be auto-actioned (must NOT include local-host).
 # Only list services that are actually monitored. inventory-api is excluded
 # because it is not a seeded/monitored service in this deployment.
-ACTION_ALLOWLIST = ["checkout-api"]
+ACTION_ALLOWLIST = [s.strip() for s in os.getenv("ACTION_ALLOWLIST", "checkout-api").split(",") if s.strip()]
 
 
 # ── Action implementations (mocked for simulated services) ────────────────────

@@ -1,5 +1,5 @@
 // api.js — typed API calls to the Vigil backend with JWT authentication
-const BASE = 'http://localhost:8000';
+const BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
 
 const getHeaders = () => {
   const token = localStorage.getItem('vigil_token');

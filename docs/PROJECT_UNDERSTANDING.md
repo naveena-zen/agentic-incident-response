@@ -17,7 +17,7 @@ Based on the actual code, the system runs as follows:
 ### Discrepancies between Aspirational Documentation and Actual Code
 * **Mocked Action Execution**: The `README.md` refers to executing mitigation actions (restarts, rollbacks). In reality, these actions are purely mocked: restarting a service just clears the in-memory anomaly flag (`policy_engine.py` lines 48-56), and rolling back a deploy simply updates a status column in the Postgres database (`policy_engine.py` lines 59-92). No actual systems (e.g., Docker, Kubernetes, or cloud servers) are restarted or modified.
 * **Hardcoded Authentication**: The login system uses a single hardcoded username/password combination (`admin` / `vigil2025`), defined in `auth.py` (lines 22-23) and fallback environment variables, rather than a real multi-user database.
-* **Limited Auto-Action Scope**: While the project implies general autonomous response capability, the code restricts automated mitigation exclusively to `checkout-api` (`policy_engine.py` line 43). All other services (`auth-api`, `payments-api`, and `local-host`) will always fall back to paging a human, regardless of how confident the AI is.
+* **Configurable Auto-Action Scope**: While the project implements safety policies, the automated mitigation allowlist is now fully configurable via the `ACTION_ALLOWLIST` environment variable (defaulting to `checkout-api`). Any services not listed in the allowlist (or `local-host` which is always blocked from auto-restarts) will fall back to paging a human, ensuring strict security bounds.
 
 ---
 

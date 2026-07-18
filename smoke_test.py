@@ -1,7 +1,7 @@
 import httpx
 import json
 
-b = 'http://localhost:8000'
+b = 'http://127.0.0.1:8000'
 
 # 1. Health (Unprotected)
 r = httpx.get(b + '/health')

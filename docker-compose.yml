@@ -39,5 +39,17 @@ services:
       db:
         condition: service_healthy
 
+  # ── Vigil React Frontend SRE Console ────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - REACT_APP_API_BASE_URL=http://localhost:8000
+    container_name: vigil-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
 volumes:
   pgdata:
