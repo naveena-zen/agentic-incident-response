@@ -152,32 +152,6 @@ docker-compose up --build
 
 ---
 
-## Folder Structure
-```
-.
-├── auth.py                  # JWT credential authentication checks
-├── database.py              # PostgreSQL database initialization & SQLAlchemy ORM mapping
-├── Dockerfile               # Build configuration for running the FastAPI application
-├── docker-compose.yml       # Configuration for deploying Postgres DB, API service, and React frontend
-├── install_pgvector.ps1     # Powershell installation script for pgvector (Windows local)
-├── main.py                  # FastAPI application entry points, endpoints & scheduler tasks
-├── metrics_loop.py          # Background metric collection & threshold rule evaluator
-├── notifications.py         # SMTP email paging and fallback logging mechanisms
-├── phase1_agent.py          # SRE agent tool-calling loop utilizing the Groq SDK
-├── policy_engine.py         # Safety allowlists, mock actions, and RAG compilation
-├── requirements.txt         # List of Python dependencies
-├── seed.py                  # Seeding script for services, deploys, and vector data
-├── smoke_test.py            # Local endpoint integration verification test script
-├── docs/                    # Architecture diagrams, reports, assessment, and roadmaps
-└── frontend/                # React dashboard frontend project files
-    ├── Dockerfile           # Multi-stage Nginx build for React console
-    ├── package.json         # Node.js dependencies
-    └── src/                 # React component source code
-        └── App.js           # Main frontend React client
-```
-
----
-
 ## Known Limitations
 
 As an architectural prototype designed for demonstrating autonomous SRE incident response patterns, Vigil contains the following intentional design simplifications:
