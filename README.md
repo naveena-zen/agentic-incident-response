@@ -107,30 +107,6 @@ The primary architectural goal of Vigil is the **strict separation of probabilis
 
 ---
 
-## Configuration & Environment Variables
-Configure the application by copying `.env.example` to `.env` and setting:
-
-| Env Variable | Default Value | Description |
-|---|---|---|
-| `DB_HOST` | `localhost` | PostgreSQL database host address |
-| `DB_PORT` | `5432` | PostgreSQL database port |
-| `DB_NAME` | `vigil` | PostgreSQL database name |
-| `DB_USER` | `postgres` | PostgreSQL username |
-| `DB_PASSWORD` | `postgres` | PostgreSQL password |
-| `GROQ_API_KEY` | — | **Required**. Groq API key for LLM diagnostics |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model used for Phase 1 investigations |
-| `AGENT_MAX_ITERATIONS` | `10` | Maximum tool-calling turns for Phase 1 |
-| `ACTION_ALLOWLIST` | `checkout-api` | Comma-separated allowlist of services that can auto-mitigate |
-| `JWT_SECRET` | `supersecret...` | Signing key for JWT Auth |
-| `DEMO_USERNAME` | `admin` | Username for dashboard console login |
-| `DEMO_PASSWORD` | `vigil2025` | Password for dashboard console login |
-| `SMTP_HOST` / `SMTP_PORT` | `smtp.gmail.com` / `587` | Paging SMTP configurations |
-| `SMTP_USER` / `SMTP_PASSWORD` | — | SMTP mail credentials. Falls back to logs if unconfigured |
-| `ALERT_EMAIL_TO` | — | Recipient email for human paging |
-| `METRICS_INTERVAL_SECONDS` | `5` | Collection frequency for local and simulated metrics |
-
----
-
 ## How to Run
 
 ### Prerequisite: Database Setup
