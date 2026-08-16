@@ -72,6 +72,14 @@ graph TD
     classDef layer stroke:#333,stroke-width:2px;
     class Frontend,Backend,DB,ExtServices layer;
 ```
+---
+
+## Tech Stack
+- **Backend API**: FastAPI (Python 3.10), Uvicorn.
+- **ORM / Database**: SQLAlchemy (Async), PostgreSQL with the `pgvector` extension and an HNSW cosine distance index.
+- **Embeddings & RAG**: `sentence-transformers` (`all-MiniLM-L6-v2`) used locally to embed incident details.
+- **LLM Agent**: Groq SDK (OpenAI-compatible client calling Llama 3 models) executing a function-calling loop.
+- **Frontend Dashboard**: React (v19), Chart.js, Vanilla CSS.
 
 ---
 
