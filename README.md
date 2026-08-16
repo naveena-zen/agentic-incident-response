@@ -86,15 +86,6 @@ The primary architectural goal of Vigil is the **strict separation of probabilis
 
 ---
 
-## Tech Stack
-- **Backend API**: FastAPI (Python 3.10), Uvicorn.
-- **ORM / Database**: SQLAlchemy (Async), PostgreSQL with the `pgvector` extension and an HNSW cosine distance index.
-- **Embeddings & RAG**: `sentence-transformers` (`all-MiniLM-L6-v2`) used locally to embed incident details.
-- **LLM Agent**: Groq SDK (OpenAI-compatible client calling Llama 3 models) executing a function-calling loop.
-- **Frontend Dashboard**: React (v19), Chart.js, Vanilla CSS.
-
----
-
 ## Features 
 * **Background Monitoring Tick**: Regularly collects real host stats via `psutil` and generates simulated metrics for internal services (`metrics_loop.py` lines 249-311).
 * **Threshold Alarm Engine**: Triggers an alert when metrics exceed thresholds (latency > 500ms, error rate > 5%, or CPU > 85%) and reserves a service-level lock (`Service.investigation_in_progress`) to block duplicate runs (`metrics_loop.py` lines 174-244).
